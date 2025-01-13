@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "great-bears-seat-order"
+version = "0.1.0"
+description = ""
+authors = ["yamaguchi-milkcocholate <zuuuubo.tetsu@outlook.jp>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+streamlit = "^1.41.1"
+black = "^24.10.0"
+isort = "^5.13.2"
+st-gsheets-connection = "^0.1.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+line_length = 120
