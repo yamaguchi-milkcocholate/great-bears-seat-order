@@ -263,8 +263,8 @@ def main() -> None:
     st.text("testing...")
 
     seet_order = get_seet_order(df_vote=df_vote)
-    df_seet = pl.DataFrame({"席順": seet_order})
-    st.dataframe(df_seet)
+    df_seet = pl.DataFrame({f"{i + 1}": name for i, name in enumerate(seet_order)})
+    st.dataframe(df_seet, use_container_width=True)
 
 
 if __name__ == "__main__":
