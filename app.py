@@ -260,7 +260,6 @@ def main() -> None:
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("席順")
-    st.text("testing...")
 
     seet_order = get_seet_order(df_vote=df_vote)
     df_seet = pl.DataFrame({f"{i + 1}": name for i, name in enumerate(seet_order)})
