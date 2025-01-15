@@ -1,2 +1,5 @@
 streamlit
 st-gsheets-connection
+plotly
+polars
+pulp
