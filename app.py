@@ -16,6 +16,7 @@ image_dir = root_dir / "images"
 VOTE_COLUMN_DISPLAY_MAP = {"name": "名前", "love1": "🩷1", "love2": "🩷2", "love3": "🩷3", "datetime": "最終更新"}
 MEMBERS = sorted(["ﾁｬﾝ", "ジョン", "神崎はるか", "神崎ようへい", "山田", "山口"])
 MEMBER2INDEX = {m: i + 1 for i, m in enumerate(MEMBERS)}
+DEADLINE = datetime.datetime(2025, 1, 17, 15, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=9)))
 
 
 def update_votes(conn: GSheetsConnection, name: str, love1: str, love2: str, love3: str) -> pd.DataFrame:
@@ -41,6 +42,30 @@ def select_recent_votes(conn: GSheetsConnection) -> pd.DataFrame:
     df["datetime"] = pd.to_datetime(df["datetime"], format="%Y-%m-%d %H:%M:%S")
     df.sort_values("name", inplace=True)
     return df
+
+
+def update_seat_order(conn: GSheetsConnection, df_seat: pl.DataFrame) -> pl.DataFrame:
+    now_dt = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))).strftime("%Y-%m-%d %H:%M:%S")
+    df_seat = df_seat.with_columns(pl.lit(now_dt).alias("datetime"))
+
+    df_seat_past = conn.read(worksheet="seat-order", ttl=0)
+    df_seat_past = pl.from_pandas(df_seat_past)
+
+    if len(df_seat_past) > 0:
+        df_seat_update = pl.concat([df_seat_past, df_seat])
+    else:
+        df_seat_update = df_seat
+
+    if not df_seat_past.select(pl.exclude("datetime")).tail(1).equals(df_seat.select(pl.exclude("datetime"))):
+        conn.update(worksheet="seat-order", data=df_seat_update)
+
+    return df_seat.select(pl.exclude("datetime"))
+
+
+def select_recent_seat_order(conn: GSheetsConnection) -> pl.DataFrame:
+    df_seat_past = conn.read(worksheet="seat-order", ttl=0)
+    df_seat_past = pl.from_pandas(df_seat_past)
+    return df_seat_past.tail(1).select(pl.exclude("datetime"))
 
 
 def check_vote(name: str, love1: str, love2: str, love3: str) -> str:
@@ -70,7 +95,7 @@ def calc_mote_score(df_vote: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def get_seet_order(df_vote: pd.DataFrame) -> pl.DataFrame:
+def get_seat_order(df_vote: pd.DataFrame) -> pl.DataFrame:
     records = []
     for _, row in df_vote.iterrows():
         records.append(
@@ -89,11 +114,11 @@ def get_seet_order(df_vote: pd.DataFrame) -> pl.DataFrame:
     if travel_indexes[0] != 0:
         raise ValueError("開始時点は端点の必要があります")
 
-    seet_orders = []
+    seat_orders = []
     for travel_index in travel_indexes[1:]:
         member_index = travel_index - 1
-        seet_orders.append(MEMBERS[member_index])
-    return seet_orders
+        seat_orders.append(MEMBERS[member_index])
+    return seat_orders
 
 
 def get_love_matrix(df_vote: pl.DataFrame, rank: int, value: float) -> np.ndarray:
@@ -154,7 +179,7 @@ def solve_love(love_matrix: np.ndarray) -> None:
         U.append(pulp.LpVariable(f"u_{i}", cat="Integer", lowBound=0, upBound=num_source - 1))
 
     # 定式化
-    problem = pulp.LpProblem("love-seet-order", pulp.LpMaximize)
+    problem = pulp.LpProblem("love-seat-order", pulp.LpMaximize)
 
     # 目的関数を定義
     objectives = []
@@ -188,6 +213,14 @@ def solve_love(love_matrix: np.ndarray) -> None:
         for j in range(num_target):
             if i != j and j != 0:
                 problem += (U[i] - U[j] <= num_source * (1 - X[i][j]) - 1, f"部分経路禁止_{i}_{j}")
+    problem += (U[0] == 0, "0をスタート地点に設定")
+
+    # 必ず0以上のスコアが全員につく(これを入れると最適化が難しい)
+    # for i in range(num_source):
+    #     constraints = []
+    #     for j in range(num_target):
+    #         constraints.append(X[i][j] * love_matrix[i][j] >= 0)
+    #     problem += (pulp.lpSum(constraints), f"スコアがプラスになる_{i}")
 
     problem.solve()
 
@@ -206,6 +239,9 @@ def solve_love(love_matrix: np.ndarray) -> None:
 
 
 def main() -> None:
+    now_dt = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    deadline_ok = now_dt < DEADLINE
+
     st.set_page_config(page_title="東京グレートベアーズを応援する会", page_icon=image_dir / "icon.png", layout="wide")
 
     conn = st.connection("gsheets", type=GSheetsConnection)
@@ -231,7 +267,11 @@ def main() -> None:
             "3番目に隣になりたい人", MEMBERS, index=None, placeholder="隣になりたい人を選んでください"
         )
 
-        submitted = st.form_submit_button("決定")
+        if deadline_ok:
+            submitted = st.form_submit_button("決定")
+        else:
+            submitted = st.form_submit_button("", disabled=True, icon=":material/timer_off:")
+
         if submitted:
             msg = check_vote(name=f_name, love1=f_love1, love2=f_love2, love3=f_love3)
             if msg != "":
@@ -261,9 +301,14 @@ def main() -> None:
 
     st.subheader("席順")
 
-    seet_order = get_seet_order(df_vote=df_vote)
-    df_seet = pl.DataFrame({f"{i + 1}": name for i, name in enumerate(seet_order)})
-    st.dataframe(df_seet, use_container_width=True)
+    if deadline_ok:
+        seat_order = get_seat_order(df_vote=df_vote)
+        df_seat = pl.DataFrame({f"{i + 1}": name for i, name in enumerate(seat_order)})
+        st.dataframe(df_seat, use_container_width=True)
+        df_seat = update_seat_order(conn=conn, df_seat=df_seat)
+    else:
+        df_seat = select_recent_seat_order(conn=conn)
+        st.dataframe(df_seat, use_container_width=True)
 
 
 if __name__ == "__main__":
